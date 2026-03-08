@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Hip Check — Early Extension Detector</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { background:#0a0f0a; color:#e8e8e8; font-family:-apple-system,'SF Pro Display','Segoe UI',sans-serif; overflow-x:hidden; min-height:100vh; min-height:100dvh; }
+  
+  .screen { display:none; flex-direction:column; min-height:100vh; min-height:100dvh; }
+  .screen.active { display:flex; }
+
+  /* ── Landing ── */
+  .landing { align-items:center; padding:48px 24px 80px; }
+  .logo svg { margin-bottom:12px; }
+  .title { font-size:32px; font-weight:800; letter-spacing:6px; color:#c8f56e; }
+  .subtitle { font-size:12px; letter-spacing:3px; color:#777; text-transform:uppercase; margin-top:4px; margin-bottom:32px; }
+  
+  .card { width:100%; max-width:400px; background:rgba(255,255,255,0.035); border:1px solid rgba(255,255,255,0.07); border-radius:14px; padding:16px 18px; margin-bottom:24px; }
+  .setting { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+  .setting + .setting { margin-top:14px; }
+  .setting-label { font-size:12px; font-weight:600; letter-spacing:1.2px; text-transform:uppercase; color:#999; }
+  .toggle-group { display:flex; gap:5px; }
+  .tog { padding:5px 12px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:#777; font-size:12px; font-weight:500; cursor:pointer; }
+  .tog.on { background:rgba(200,245,110,0.1); border-color:#c8f56e; color:#c8f56e; }
+  
+  .slider { width:85px; accent-color:#c8f56e; }
+  .sens-val { font-size:13px; color:#c8f56e; font-weight:600; min-width:24px; text-align:right; }
+
+  .btn-pri { padding:13px 36px; border-radius:11px; border:none; background:#c8f56e; color:#0a0f0a; font-size:15px; font-weight:700; letter-spacing:1px; cursor:pointer; text-transform:uppercase; box-shadow:0 0 25px rgba(200,245,110,0.18); }
+  .btn-pri:active { transform:scale(0.97); }
+  .btn-sec { padding:9px 20px; border-radius:9px; border:1px solid rgba(255,255,255,0.18); background:transparent; color:#bbb; font-size:12px; font-weight:600; cursor:pointer; margin-top:10px; }
+  .btn-sec.danger { border-color:#ff4646; color:#ff4646; }
+
+  .guide { margin-top:28px; width:100%; max-width:400px; padding:18px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.05); border-radius:11px; }
+  .guide-title { font-size:11px; font-weight:700; letter-spacing:2px; text-transform:uppercase; color:#c8f56e; margin-bottom:10px; }
+  .guide-text { font-size:13px; line-height:1.55; color:#888; margin-bottom:6px; }
+  .guide-text b { color:#bbb; }
+  .guide-text.accent { color:#c8f56e; margin-top:8px; }
+
+  /* ── Camera ── */
+  .camera-screen { padding:0; }
+  .video-wrap { position:relative; flex:1; overflow:hidden; background:#000; }
+  .video-wrap video { width:100%; height:100%; object-fit:cover; display:block; }
+  .video-wrap canvas { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; }
+  
+  .tap-hint { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.75); padding:12px 24px; border-radius:10px; border:1px solid rgba(200,245,110,0.3); z-index:5; }
+  .tap-hint span { font-size:14px; font-weight:700; letter-spacing:2px; color:#c8f56e; }
+  
+  .hip-badge { position:absolute; top:12px; right:12px; background:rgba(0,0,0,0.7); padding:6px 14px; border-radius:8px; font-size:12px; font-weight:600; color:#c8f56e; z-index:5; }
+
+  .result-flash { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; border:3px solid; pointer-events:none; z-index:10; transition:opacity 0.3s; }
+  .result-flash.good { background:rgba(200,245,110,0.12); border-color:#c8f56e; }
+  .result-flash.bad { background:rgba(255,70,70,0.12); border-color:#ff4646; }
+  .result-flash span { font-size:26px; font-weight:800; letter-spacing:4px; text-transform:uppercase; text-shadow:0 2px 16px rgba(0,0,0,0.7); }
+  .result-flash.good span { color:#c8f56e; }
+  .result-flash.bad span { color:#ff4646; }
+
+  .status-bar { padding:10px 14px; background:rgba(0,0,0,0.85); text-align:center; display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .status-bar p { font-size:13px; color:#bbb; }
+
+  .tracker-bar { display:flex; justify-content:space-around; padding:8px 14px; background:rgba(0,0,0,0.9); border-top:1px solid rgba(255,255,255,0.06); }
+  .stat { display:flex; flex-direction:column; align-items:center; gap:1px; }
+  .stat-num { font-size:20px; font-weight:800; color:#fff; }
+  .stat-num.green { color:#c8f56e; }
+  .stat-num.red { color:#ff4646; }
+  .stat-lbl { font-size:9px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:#555; }
+
+  .control-bar { display:flex; justify-content:center; gap:10px; padding:10px 14px; background:rgba(0,0,0,0.9); border-top:1px solid rgba(255,255,255,0.05); }
+  .control-bar .btn-sec { margin-top:0; }
+
+  /* ── Review ── */
+  .review-screen { padding:40px 20px; }
+  .review-title { font-size:22px; font-weight:800; letter-spacing:3px; color:#c8f56e; text-transform:uppercase; margin-bottom:20px; }
+  .session-card { background:rgba(255,255,255,0.035); border:1px solid rgba(255,255,255,0.07); border-radius:11px; padding:14px; margin-bottom:12px; }
+  .session-head { display:flex; justify-content:space-between; margin-bottom:8px; font-size:13px; }
+  .session-head .date { color:#aaa; }
+  .session-head .count { color:#666; }
+  .bar-bg { width:100%; height:5px; border-radius:3px; background:rgba(255,255,255,0.07); margin-bottom:8px; overflow:hidden; }
+  .bar-fill { height:100%; border-radius:3px; transition:width 0.4s; }
+  .session-stats { display:flex; justify-content:space-between; font-size:12px; font-weight:500; }
+  .session-stats .g { color:#c8f56e; }
+  .session-stats .b { color:#ff4646; }
+  .session-stats .p { color:#fff; font-weight:700; }
+  .review-btns { display:flex; gap:12px; margin-top:24px; flex-wrap:wrap; }
+
+  .swing-dot { position:absolute; top:12px; left:12px; width:14px; height:14px; border-radius:50%; background:rgba(255,200,0,0.85); z-index:5; display:none; }
+  .swing-dot.on { display:block; animation:pulse 0.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+</style>
+</head>
+<body>
+
+<!-- ═══════════ LANDING ═══════════ -->
+<div id="landingScreen" class="screen landing active">
+  <div class="logo">
+    <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+      <circle cx="22" cy="22" r="20" stroke="#c8f56e" stroke-width="1.5"/>
+      <path d="M22 6L22 38" stroke="#c8f56e" stroke-width="1" stroke-dasharray="3 3"/>
+      <circle cx="22" cy="22" r="3.5" fill="#c8f56e"/>
+      <path d="M16 30Q22 18 28 30" stroke="#c8f56e" stroke-width="1.5" fill="none"/>
+    </svg>
+  </div>
+  <div class="title">HIP CHECK</div>
+  <div class="subtitle">Early Extension Detector</div>
+
+  <div class="card">
+    <div class="setting">
+      <span class="setting-label">Feedback</span>
+      <div class="toggle-group" id="feedbackToggles">
+        <button class="tog" data-val="tone">Tone</button>
+        <button class="tog on" data-val="both">Both</button>
+        <button class="tog" data-val="voice">Voice</button>
+      </div>
+    </div>
+    <div class="setting">
+      <span class="setting-label">Tracker</span>
+      <button class="tog on" id="trackerToggle">ON</button>
+    </div>
+    <div class="setting">
+      <span class="setting-label">Sensitivity</span>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="range" class="slider" id="sensSlider" min="3" max="25" value="8">
+        <span class="sens-val" id="sensVal">8</span>
+      </div>
+    </div>
+  </div>
+
+  <button class="btn-pri" id="startBtn">Start Session</button>
+  <button class="btn-sec" id="viewSessionsBtn" style="display:none">Past Sessions</button>
+
+  <div class="guide">
+    <div class="guide-title">How It Works</div>
+    <p class="guide-text">1. Place phone on tripod <b>~8 ft behind you</b>, down the target line, hip height.</p>
+    <p class="guide-text">2. Once camera is live, <b>tap on your hips</b> in the video to mark the tracking zone.</p>
+    <p class="guide-text">3. Calibrate at address, then swing. Instant audio feedback on every swing.</p>
+    <p class="guide-text accent">Tracks whether your hips move toward the ball during the swing. Green line = baseline. Red line = extension threshold.</p>
+  </div>
+</div>
+
+<!-- ═══════════ CAMERA ═══════════ -->
+<div id="cameraScreen" class="screen camera-screen">
+  <div class="video-wrap" id="videoWrap">
+    <video id="video" playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div class="swing-dot" id="swingDot"></div>
+    <div class="tap-hint" id="tapHint"><span>TAP YOUR HIPS</span></div>
+    <div class="hip-badge" id="hipBadge" style="display:none">Hip zone set ✓</div>
+    <div class="result-flash" id="resultFlash" style="display:none"><span id="resultText"></span></div>
+  </div>
+  <div class="status-bar">
+    <p id="statusMsg">Loading…</p>
+    <button class="btn-pri" id="calibrateBtn" style="display:none;padding:9px 24px;font-size:13px">Calibrate</button>
+  </div>
+  <div class="tracker-bar" id="trackerBar">
+    <div class="stat"><span class="stat-num" id="totalNum">0</span><span class="stat-lbl">Total</span></div>
+    <div class="stat"><span class="stat-num green" id="goodNum">0</span><span class="stat-lbl">Good</span></div>
+    <div class="stat"><span class="stat-num red" id="badNum">0</span><span class="stat-lbl">Extended</span></div>
+    <div class="stat"><span class="stat-num" id="pctNum">0%</span><span class="stat-lbl">Clean</span></div>
+  </div>
+  <div class="control-bar">
+    <button class="btn-sec" id="recalBtn" style="display:none">Re-calibrate</button>
+    <button class="btn-sec danger" id="endBtn">End Session</button>
+  </div>
+</div>
+
+<!-- ═══════════ REVIEW ═══════════ -->
+<div id="reviewScreen" class="screen review-screen">
+  <div class="review-title">Session History</div>
+  <div id="sessionList"></div>
+  <div class="review-btns">
+    <button class="btn-pri" id="newSessionBtn">New Session</button>
+    <button class="btn-sec danger" id="clearBtn" style="display:none">Clear</button>
+  </div>
+</div>
+
+<script>
+// ─── State ──────────────────────────────────────────────────────
+let feedbackMode = "both";
+let showTracker = true;
+let sensitivity = 8;
+let goodSwings = 0, badSwings = 0;
+let sessions = [];
+let hipRegion = null; // {x, y, w, h} in analysis coords (320x240)
+let baselineY = null;
+let phase = "landing"; // landing, setup, calibrating, active, review
+let stream = null;
+let prevFrame = null;
+let swingState = "idle"; // idle, swinging, cooldown
+let swingMaxShift = 0;
+let swingFrames = 0;
+let motionBuf = [];
+let rafId = null;
+let cooldownTimer = null;
+let resultTimer = null;
+
+const AW = 320, AH = 240;
+const SWING_MOTION_THRESHOLD = 350;
+const SWING_COOLDOWN_MS = 2500;
+
+// Work canvas (offscreen)
+const workCanvas = document.createElement("canvas");
+workCanvas.width = AW; workCanvas.height = AH;
+const workCtx = workCanvas.getContext("2d", { willReadFrequently: true });
+
+// ─── Load sessions ──────────────────────────────────────────────
+try { sessions = JSON.parse(localStorage.getItem("hipcheck_sessions") || "[]"); } catch(e) { sessions = []; }
+function saveSessions() { try { localStorage.setItem("hipcheck_sessions", JSON.stringify(sessions)); } catch(e) {} }
+
+// ─── Audio ──────────────────────────────────────────────────────
+let audioCtx = null;
+function getAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  return audioCtx;
+}
+
+function playTone(freq, dur, type) {
+  try {
+    const c = getAudio(), o = c.createOscillator(), g = c.createGain();
+    o.type = type || "sine"; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.35, c.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.01, c.currentTime + dur);
+    o.connect(g); g.connect(c.destination); o.start(); o.stop(c.currentTime + dur);
+  } catch(e) {}
+}
+function goodTone() { playTone(880,0.15,"sine"); setTimeout(()=>playTone(1108,0.2,"sine"),120); }
+function badTone() { playTone(280,0.25,"sawtooth"); setTimeout(()=>playTone(220,0.35,"sawtooth"),200); }
+function speak(t) { try { const u=new SpeechSynthesisUtterance(t); u.rate=1.1; u.volume=0.9; speechSynthesis.speak(u); } catch(e){} }
+function calibTone() { playTone(660,0.1); setTimeout(()=>playTone(880,0.15),100); }
+
+// ─── Frame helpers ──────────────────────────────────────────────
+function getFrame(video) {
+  workCtx.drawImage(video, 0, 0, AW, AH);
+  return workCtx.getImageData(0, 0, AW, AH);
+}
+
+function overallMotion(p, c) {
+  const d1=p.data, d2=c.data; let count=0;
+  for (let i=0; i<d1.length; i+=16) {
+    if (Math.abs((d2[i]+d2[i+1]+d2[i+2])/3-(d1[i]+d1[i+1]+d1[i+2])/3) > 20) count++;
+  }
+  return count;
+}
+
+function hipCentroidY(frame, r) {
+  const d=frame.data, fw=frame.width;
+  let sumY=0, tw=0;
+  for (let row=r.y; row<r.y+r.h && row<frame.height; row++) {
+    let rs=0;
+    for (let col=r.x; col<r.x+r.w && col<fw; col++) {
+      const idx=(row*fw+col)*4;
+      rs += (d[idx]+d[idx+1]+d[idx+2])/3;
+    }
+    sumY += row*rs; tw += rs;
+  }
+  return tw>0 ? sumY/tw : r.y+r.h/2;
+}
+
+// ─── DOM refs ───────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const landingScreen = $("landingScreen");
+const cameraScreen = $("cameraScreen");
+const reviewScreen = $("reviewScreen");
+const video = $("video");
+const overlayCanvas = $("overlay");
+const overlayCtx = overlayCanvas.getContext("2d");
+
+function showScreen(name) {
+  landingScreen.classList.toggle("active", name==="landing");
+  cameraScreen.classList.toggle("active", name==="camera");
+  reviewScreen.classList.toggle("active", name==="review");
+}
+
+// ─── Landing controls ───────────────────────────────────────────
+// Feedback toggles
+$("feedbackToggles").addEventListener("click", e => {
+  const btn = e.target.closest(".tog");
+  if (!btn) return;
+  // Init audio context on user gesture
+  getAudio();
+  feedbackMode = btn.dataset.val;
+  document.querySelectorAll("#feedbackToggles .tog").forEach(b => b.classList.toggle("on", b===btn));
+});
+
+// Tracker toggle
+$("trackerToggle").addEventListener("click", function() {
+  showTracker = !showTracker;
+  this.classList.toggle("on", showTracker);
+  this.textContent = showTracker ? "ON" : "OFF";
+});
+
+// Sensitivity
+$("sensSlider").addEventListener("input", function() {
+  sensitivity = +this.value;
+  $("sensVal").textContent = sensitivity;
+});
+
+// View sessions
+$("viewSessionsBtn").addEventListener("click", () => { renderReview(); showScreen("review"); });
+if (sessions.length > 0) $("viewSessionsBtn").style.display = "";
+
+// ─── Start session ──────────────────────────────────────────────
+$("startBtn").addEventListener("click", async () => {
+  // Init audio on user gesture
+  getAudio();
+  
+  $("startBtn").textContent = "Loading…";
+  $("startBtn").disabled = true;
+  
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode:"environment", width:{ideal:640}, height:{ideal:480} },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    
+    phase = "setup";
+    hipRegion = null;
+    baselineY = null;
+    goodSwings = 0; badSwings = 0;
+    prevFrame = null;
+    swingState = "idle";
+    motionBuf = [];
+    
+    $("statusMsg").textContent = "Tap on your hips/backside in the video to mark the tracking zone.";
+    $("tapHint").style.display = "";
+    $("hipBadge").style.display = "none";
+    $("calibrateBtn").style.display = "none";
+    $("recalBtn").style.display = "none";
+    $("resultFlash").style.display = "none";
+    $("swingDot").classList.remove("on");
+    $("trackerBar").style.display = showTracker ? "flex" : "none";
+    updateStats();
+    
+    showScreen("camera");
+  } catch(e) {
+    alert("Camera error: " + e.message);
+  }
+  
+  $("startBtn").textContent = "Start Session";
+  $("startBtn").disabled = false;
+});
+
+// ─── Tap to mark hips ──────────────────────────────────────────
+$("videoWrap").addEventListener("click", e => {
+  if (phase !== "setup") return;
+  const rect = $("videoWrap").getBoundingClientRect();
+  const tx = ((e.clientX - rect.left) / rect.width) * AW;
+  const ty = ((e.clientY - rect.top) / rect.height) * AH;
+  const rw=56, rh=44;
+  hipRegion = { x:Math.max(0,Math.round(tx-rw/2)), y:Math.max(0,Math.round(ty-rh/2)), w:rw, h:rh };
+  $("tapHint").style.display = "none";
+  $("hipBadge").style.display = "";
+  $("calibrateBtn").style.display = "";
+  $("statusMsg").textContent = "Hip zone marked! Hit Calibrate while at address.";
+  
+  // Draw the region immediately
+  drawOverlayBox();
+});
+
+function drawOverlayBox() {
+  if (!hipRegion) return;
+  const c = overlayCanvas;
+  const w = c.clientWidth, h = c.clientHeight;
+  c.width = w; c.height = h;
+  const ctx = overlayCtx;
+  ctx.clearRect(0,0,w,h);
+  const sx=w/AW, sy=h/AH;
+  ctx.strokeStyle = "rgba(200,245,110,0.6)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(hipRegion.x*sx, hipRegion.y*sy, hipRegion.w*sx, hipRegion.h*sy);
+}
+
+// ─── Calibrate ─────────────────────────────────────────────────
+$("calibrateBtn").addEventListener("click", () => {
+  if (!hipRegion) return;
+  phase = "calibrating";
+  $("calibrateBtn").style.display = "none";
+  $("statusMsg").textContent = "Hold address position…";
+  
+  let samples = [], count = 0;
+  function run() {
+    const frame = getFrame(video);
+    samples.push(hipCentroidY(frame, hipRegion));
+    count++;
+    if (count < 20) { requestAnimationFrame(run); return; }
+    
+    baselineY = samples.reduce((a,b)=>a+b,0) / samples.length;
+    prevFrame = getFrame(video);
+    motionBuf = [];
+    
+    calibTone();
+    $("statusMsg").textContent = "Calibrated — swing away!";
+    $("recalBtn").style.display = "";
+    phase = "active";
+    startLoop();
+  }
+  requestAnimationFrame(run);
+});
+
+// ─── Main detection loop ───────────────────────────────────────
+function startLoop() {
+  if (rafId) cancelAnimationFrame(rafId);
+  
+  function loop() {
+    if (!stream || phase !== "active") return;
+    const curr = getFrame(video);
+    
+    if (prevFrame && hipRegion && baselineY !== null) {
+      const motion = overallMotion(prevFrame, curr);
+      motionBuf.push(motion);
+      if (motionBuf.length > 60) motionBuf.shift();
+      
+      const hy = hipCentroidY(curr, hipRegion);
+      drawOverlay(hy, motion);
+      
+      // Swing state machine
+      if (swingState === "idle" && motion > SWING_MOTION_THRESHOLD) {
+        swingState = "swinging";
+        swingMaxShift = 0;
+        swingFrames = 0;
+        $("swingDot").classList.add("on");
+      } else if (swingState === "swinging") {
+        const shift = baselineY - hy; // positive = toward ball
+        if (shift > swingMaxShift) swingMaxShift = shift;
+        swingFrames++;
+        
+        const recent = motionBuf.slice(-6);
+        const avg = recent.reduce((a,b)=>a+b,0) / recent.length;
+        if (avg < SWING_MOTION_THRESHOLD * 0.25 && swingFrames > 6) {
+          evaluateSwing(swingMaxShift);
+          swingState = "cooldown";
+          $("swingDot").classList.remove("on");
+          cooldownTimer = setTimeout(() => { swingState = "idle"; }, SWING_COOLDOWN_MS);
+        }
+      }
+    }
+    
+    prevFrame = curr;
+    rafId = requestAnimationFrame(loop);
+  }
+  rafId = requestAnimationFrame(loop);
+}
+
+// ─── Evaluate swing ────────────────────────────────────────────
+function evaluateSwing(maxShift) {
+  const isEarly = maxShift > sensitivity;
+  
+  if (isEarly) {
+    badSwings++;
+    showResult("bad");
+    if (feedbackMode==="tone"||feedbackMode==="both") badTone();
+    if (feedbackMode==="voice"||feedbackMode==="both") setTimeout(()=>speak("Early extension"),200);
+  } else {
+    goodSwings++;
+    showResult("good");
+    if (feedbackMode==="tone"||feedbackMode==="both") goodTone();
+    if (feedbackMode==="voice"||feedbackMode==="both") setTimeout(()=>speak("Good swing"),200);
+  }
+  updateStats();
+}
+
+function showResult(type) {
+  const el = $("resultFlash");
+  el.className = "result-flash " + type;
+  $("resultText").textContent = type==="good" ? "GOOD SWING" : "EARLY EXTENSION";
+  el.style.display = "flex";
+  if (resultTimer) clearTimeout(resultTimer);
+  resultTimer = setTimeout(() => { el.style.display = "none"; }, 2200);
+}
+
+function updateStats() {
+  const total = goodSwings + badSwings;
+  $("totalNum").textContent = total;
+  $("goodNum").textContent = goodSwings;
+  $("badNum").textContent = badSwings;
+  $("pctNum").textContent = (total > 0 ? Math.round((goodSwings/total)*100) : 0) + "%";
+}
+
+// ─── Draw overlay ──────────────────────────────────────────────
+function drawOverlay(hipY, motion) {
+  const c = overlayCanvas;
+  const w = c.clientWidth, h = c.clientHeight;
+  c.width = w; c.height = h;
+  const ctx = overlayCtx;
+  ctx.clearRect(0,0,w,h);
+  if (!hipRegion) return;
+  const sx=w/AW, sy=h/AH;
+
+  // Hip region box
+  ctx.strokeStyle = "rgba(200,245,110,0.6)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(hipRegion.x*sx, hipRegion.y*sy, hipRegion.w*sx, hipRegion.h*sy);
+
+  if (baselineY !== null) {
+    // Baseline (green dashed)
+    const by = baselineY * sy;
+    ctx.beginPath(); ctx.moveTo(hipRegion.x*sx, by); ctx.lineTo((hipRegion.x+hipRegion.w)*sx, by);
+    ctx.strokeStyle="#c8f56e"; ctx.lineWidth=2; ctx.setLineDash([6,4]); ctx.stroke(); ctx.setLineDash([]);
+    
+    // Threshold (red dashed)
+    const ty = (baselineY - sensitivity) * sy;
+    ctx.beginPath(); ctx.moveTo(hipRegion.x*sx, ty); ctx.lineTo((hipRegion.x+hipRegion.w)*sx, ty);
+    ctx.strokeStyle="rgba(255,70,70,0.5)"; ctx.lineWidth=1; ctx.setLineDash([4,4]); ctx.stroke(); ctx.setLineDash([]);
+    
+    // Current hip (white solid)
+    const cy = hipY * sy;
+    ctx.beginPath(); ctx.moveTo(hipRegion.x*sx, cy); ctx.lineTo((hipRegion.x+hipRegion.w)*sx, cy);
+    ctx.strokeStyle="#fff"; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.stroke();
+  }
+}
+
+// ─── Re-calibrate ──────────────────────────────────────────────
+$("recalBtn").addEventListener("click", () => {
+  if (rafId) cancelAnimationFrame(rafId);
+  phase = "setup";
+  hipRegion = null;
+  baselineY = null;
+  $("tapHint").style.display = "";
+  $("hipBadge").style.display = "none";
+  $("calibrateBtn").style.display = "none";
+  $("recalBtn").style.display = "none";
+  $("swingDot").classList.remove("on");
+  $("statusMsg").textContent = "Re-mark hip zone and calibrate.";
+  
+  // Clear overlay
+  const c = overlayCanvas;
+  c.width = c.clientWidth; c.height = c.clientHeight;
+  overlayCtx.clearRect(0, 0, c.width, c.height);
+});
+
+// ─── End session ───────────────────────────────────────────────
+$("endBtn").addEventListener("click", () => {
+  if (rafId) cancelAnimationFrame(rafId);
+  if (cooldownTimer) clearTimeout(cooldownTimer);
+  if (resultTimer) clearTimeout(resultTimer);
+  if (stream) { stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  
+  const total = goodSwings + badSwings;
+  if (total > 0) {
+    sessions.push({
+      date: new Date().toISOString(),
+      good: goodSwings, bad: badSwings, total,
+      pct: Math.round((goodSwings/total)*100)
+    });
+    saveSessions();
+  }
+  
+  phase = "review";
+  renderReview();
+  showScreen("review");
+});
+
+// ─── Review screen ─────────────────────────────────────────────
+function renderReview() {
+  const list = $("sessionList");
+  if (sessions.length === 0) {
+    list.innerHTML = '<p style="color:#666;font-size:14px">No sessions yet.</p>';
+    $("clearBtn").style.display = "none";
+    return;
+  }
+  $("clearBtn").style.display = "";
+  
+  let html = "";
+  [...sessions].reverse().forEach(s => {
+    const d = new Date(s.date);
+    const ds = d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+    const ts = d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
+    const color = s.pct>=70 ? "#c8f56e" : s.pct>=40 ? "#f5c842" : "#ff4646";
+    html += `
+      <div class="session-card">
+        <div class="session-head"><span class="date">${ds} · ${ts}</span><span class="count">${s.total} swings</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:${s.pct}%;background:${color}"></div></div>
+        <div class="session-stats"><span class="g">${s.good} good</span><span class="b">${s.bad} ext</span><span class="p">${s.pct}%</span></div>
+      </div>`;
+  });
+  list.innerHTML = html;
+}
+
+$("newSessionBtn").addEventListener("click", () => {
+  $("viewSessionsBtn").style.display = sessions.length > 0 ? "" : "none";
+  showScreen("landing");
+});
+
+$("clearBtn").addEventListener("click", () => {
+  sessions = [];
+  saveSessions();
+  renderReview();
+});
+</script>
+</body>
+</html>
