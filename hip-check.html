@@ -6,6 +6,13 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Hip Check — Early Extension Detector</title>
+
+<!-- TensorFlow.js + MoveNet -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.17.0/dist/tf-core.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.17.0/dist/tf-converter.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.17.0/dist/tf-backend-webgl.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"></script>
+
 <style>
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   body{background:#0a0f0a;color:#e8e8e8;font-family:-apple-system,'SF Pro Display','Segoe UI',sans-serif;overflow-x:hidden;min-height:100vh;min-height:100dvh}
@@ -25,7 +32,8 @@
   .slider{width:85px;accent-color:#c8f56e}
   .sens-val{font-size:13px;color:#c8f56e;font-weight:600;min-width:24px;text-align:right}
   .btn-pri{padding:13px 36px;border-radius:11px;border:none;background:#c8f56e;color:#0a0f0a;font-size:15px;font-weight:700;letter-spacing:1px;cursor:pointer;text-transform:uppercase;box-shadow:0 0 25px rgba(200,245,110,0.18)}
-  .btn-pri:active{transform:scale(0.97)}
+  .btn-pri:disabled{opacity:0.5;cursor:default}
+  .btn-pri:active:not(:disabled){transform:scale(0.97)}
   .btn-sec{padding:9px 20px;border-radius:9px;border:1px solid rgba(255,255,255,0.18);background:transparent;color:#bbb;font-size:12px;font-weight:600;cursor:pointer;margin-top:10px}
   .btn-sec.danger{border-color:#ff4646;color:#ff4646}
   .guide{margin-top:28px;width:100%;max-width:400px;padding:18px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:11px}
@@ -33,6 +41,7 @@
   .guide-text{font-size:13px;line-height:1.55;color:#888;margin-bottom:6px}
   .guide-text b{color:#bbb}
   .guide-text.accent{color:#c8f56e;margin-top:8px}
+  .loading-msg{font-size:13px;color:#999;margin-top:12px;text-align:center}
 
   .camera-screen{padding:0}
   .video-wrap{position:relative;flex:1;overflow:hidden;background:#000}
@@ -55,6 +64,8 @@
   .swing-dot{position:absolute;top:12px;right:12px;width:14px;height:14px;border-radius:50%;background:rgba(255,200,0,0.85);z-index:15;display:none}
   .swing-dot.on{display:block;animation:pulse 0.5s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+
+  .debug-info{position:absolute;bottom:8px;left:8px;font-size:10px;color:rgba(255,255,255,0.4);z-index:15;font-family:monospace}
 
   .tracker-bar{display:flex;justify-content:space-around;padding:10px 14px;background:rgba(0,0,0,0.9);border-top:1px solid rgba(255,255,255,0.06)}
   .stat{display:flex;flex-direction:column;align-items:center;gap:1px}
@@ -83,6 +94,7 @@
 </head>
 <body>
 
+<!-- ═══ LANDING ═══ -->
 <div id="landingScreen" class="screen landing active">
   <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
     <circle cx="22" cy="22" r="20" stroke="#c8f56e" stroke-width="1.5"/>
@@ -109,8 +121,8 @@
     <div class="setting">
       <span class="setting-label">Sensitivity</span>
       <div style="display:flex;align-items:center;gap:8px">
-        <input type="range" class="slider" id="sensSlider" min="3" max="25" value="8">
-        <span class="sens-val" id="sensVal">8</span>
+        <input type="range" class="slider" id="sensSlider" min="2" max="40" value="15">
+        <span class="sens-val" id="sensVal">15</span>
       </div>
     </div>
     <div class="setting">
@@ -125,27 +137,30 @@
   </div>
 
   <button class="btn-pri" id="startBtn">Start Session</button>
+  <div class="loading-msg" id="loadingMsg" style="display:none">Loading pose detection model…</div>
   <button class="btn-sec" id="viewSessionsBtn" style="display:none">Past Sessions</button>
 
   <div class="guide">
     <div class="guide-title">How It Works</div>
-    <p class="guide-text">1. Set phone on tripod <b>~8 ft behind you</b>, down the line, hip height.</p>
-    <p class="guide-text">2. Hit <b>Start Session</b> — a countdown gives you time to walk out and get set.</p>
-    <p class="guide-text">3. App <b>auto-detects your hips</b> and locks baseline. You'll hear a chime.</p>
-    <p class="guide-text">4. Swing away — <b>instant audio feedback</b> on every swing. Fully hands-free.</p>
-    <p class="guide-text accent">Voice commands: say "recalibrate" to re-lock baseline, or "stop" to end.</p>
+    <p class="guide-text">1. Set phone on tripod <b>~8 ft behind you</b>, down the target line, hip height.</p>
+    <p class="guide-text">2. Hit <b>Start Session</b> — the pose model loads, then a countdown gives you time to get set.</p>
+    <p class="guide-text">3. App uses <b>AI pose detection</b> to find your hip keypoints and lock your baseline at address.</p>
+    <p class="guide-text">4. Swing away — tracks your <b>actual hip position</b> every frame. Instant audio feedback.</p>
+    <p class="guide-text accent">Voice commands: say "recalibrate" to re-lock, "stop" to end session.</p>
   </div>
 </div>
 
+<!-- ═══ CAMERA ═══ -->
 <div id="cameraScreen" class="screen camera-screen">
   <div class="video-wrap" id="videoWrap">
     <video id="video" playsinline muted></video>
     <canvas id="overlay"></canvas>
     <div class="swing-dot" id="swingDot"></div>
     <div class="status-badge" id="statusBadge" style="display:none"></div>
+    <div class="debug-info" id="debugInfo"></div>
     <div class="countdown-overlay" id="countdownOverlay" style="display:none">
       <div class="countdown-num" id="countdownNum"></div>
-      <div class="countdown-msg" id="countdownMsg">Get into your address position</div>
+      <div class="countdown-msg" id="countdownMsg"></div>
     </div>
     <div class="result-flash" id="resultFlash" style="display:none"><span id="resultText"></span></div>
   </div>
@@ -161,6 +176,7 @@
   </div>
 </div>
 
+<!-- ═══ REVIEW ═══ -->
 <div id="reviewScreen" class="screen review-screen">
   <div class="review-title">Session History</div>
   <div id="sessionList"></div>
@@ -171,209 +187,587 @@
 </div>
 
 <script>
-let feedbackMode="both",showTracker=true,sensitivity=8,countdownSecs=10;
-let goodSwings=0,badSwings=0,sessions=[];
-let hipRegion=null,baselineY=null,phase="landing";
-let stream=null,prevFrame=null,swingState="idle",swingMaxShift=0,swingFrames=0,motionBuf=[];
-let rafId=null,cooldownTimer=null,resultTimer=null,countdownInterval=null,recognition=null;
+// ─── MoveNet keypoint indices (COCO) ────────────────────────────
+const KP = {
+  NOSE: 0, L_EYE: 1, R_EYE: 2, L_EAR: 3, R_EAR: 4,
+  L_SHOULDER: 5, R_SHOULDER: 6, L_ELBOW: 7, R_ELBOW: 8,
+  L_WRIST: 9, R_WRIST: 10, L_HIP: 11, R_HIP: 12,
+  L_KNEE: 13, R_KNEE: 14, L_ANKLE: 15, R_ANKLE: 16
+};
+const MIN_CONFIDENCE = 0.3;
 
-const AW=320,AH=240,SWING_MOTION_THRESHOLD=350,SWING_COOLDOWN_MS=2500;
-const workCanvas=document.createElement("canvas");
-workCanvas.width=AW;workCanvas.height=AH;
-const workCtx=workCanvas.getContext("2d",{willReadFrequently:true});
+// ─── State ──────────────────────────────────────────────────────
+let feedbackMode = "both", showTracker = true, sensitivity = 15, countdownSecs = 10;
+let goodSwings = 0, badSwings = 0, sessions = [];
+let phase = "landing"; // landing, loading, countdown, calibrating, active, recal, review
+let stream = null, detector = null;
+let rafId = null, cooldownTimer = null, resultTimer = null, countdownInterval = null, recognition = null;
 
-try{sessions=JSON.parse(localStorage.getItem("hc_s")||"[]")}catch(e){sessions=[]}
-function saveS(){try{localStorage.setItem("hc_s",JSON.stringify(sessions))}catch(e){}}
+// Pose tracking state
+let baselineHipY = null;       // Average hip Y at address (in image pixels)
+let prevWristY = null;          // For wrist speed tracking
+let swingState = "idle";        // idle, backswing, downswing, cooldown
+let swingPeakShift = 0;         // Max hip-toward-ball shift during this swing
+let swingFrameCount = 0;
+let wristSpeedBuf = [];         // Recent wrist speeds for swing detection
+let idleFrames = 0;             // Count frames of low motion after swing
 
-// Audio
-let audioCtx=null;
-function getAudio(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();if(audioCtx.state==="suspended")audioCtx.resume();return audioCtx}
-function playTone(f,d,t){try{const c=getAudio(),o=c.createOscillator(),g=c.createGain();o.type=t||"sine";o.frequency.value=f;g.gain.setValueAtTime(0.35,c.currentTime);g.gain.exponentialRampToValueAtTime(0.01,c.currentTime+d);o.connect(g);g.connect(c.destination);o.start();o.stop(c.currentTime+d)}catch(e){}}
-function goodTone(){playTone(880,.15);setTimeout(()=>playTone(1108,.2),120)}
-function badTone(){playTone(280,.25,"sawtooth");setTimeout(()=>playTone(220,.35,"sawtooth"),200)}
-function calibTone(){playTone(660,.1);setTimeout(()=>playTone(880,.15),100);setTimeout(()=>playTone(1100,.2),200)}
-function beep(){playTone(600,.08)}
-function beepHigh(){playTone(900,.15)}
-function speak(t){try{const u=new SpeechSynthesisUtterance(t);u.rate=1.1;u.volume=0.9;speechSynthesis.speak(u)}catch(e){}}
+// Thresholds for swing detection using wrist keypoint speed
+const WRIST_SPEED_START = 12;   // px/frame to start detecting a swing
+const WRIST_SPEED_END = 4;      // px/frame to consider swing finished
+const MIN_SWING_FRAMES = 8;     // Minimum frames for a valid swing
+const SWING_COOLDOWN_MS = 2000;
+const IDLE_FRAMES_NEEDED = 4;   // Frames of low motion to confirm swing end
 
-// Frame helpers
-function getFrame(v){workCtx.drawImage(v,0,0,AW,AH);return workCtx.getImageData(0,0,AW,AH)}
-function overallMotion(p,c){const d1=p.data,d2=c.data;let n=0;for(let i=0;i<d1.length;i+=16){if(Math.abs((d2[i]+d2[i+1]+d2[i+2])/3-(d1[i]+d1[i+1]+d1[i+2])/3)>20)n++}return n}
-function hipCentroidY(fr,r){const d=fr.data,fw=fr.width;let sY=0,tw=0;for(let row=r.y;row<r.y+r.h&&row<fr.height;row++){let rs=0;for(let col=r.x;col<r.x+r.w&&col<fw;col++){const i=(row*fw+col)*4;rs+=(d[i]+d[i+1]+d[i+2])/3}sY+=row*rs;tw+=rs}return tw>0?sY/tw:r.y+r.h/2}
+try { sessions = JSON.parse(localStorage.getItem("hc_s2") || "[]"); } catch(e) { sessions = []; }
+function saveS() { try { localStorage.setItem("hc_s2", JSON.stringify(sessions)); } catch(e) {} }
 
-// Auto-detect hip region
-function autoDetectHipRegion(frame){
-  const d=frame.data,fw=frame.width,fh=frame.height;
-  const sL=Math.floor(fw*.2),sR=Math.floor(fw*.8),sT=Math.floor(fh*.35),sB=Math.floor(fh*.65);
-  let tb=0,tp=0;
-  for(let r=sT;r<sB;r+=2)for(let c=sL;c<sR;c+=2){const i=(r*fw+c)*4;tb+=(d[i]+d[i+1]+d[i+2])/3;tp++}
-  const avg=tb/tp;
-  const cd=new Array(fw).fill(0);
-  for(let c=sL;c<sR;c++)for(let r=sT;r<sB;r+=2){const i=(r*fw+c)*4;if(Math.abs((d[i]+d[i+1]+d[i+2])/3-avg)>15)cd[c]++}
-  const wW=Math.floor(fw*.15);
-  let best=0,bCol=sL,run=0;
-  for(let i=sL;i<sL+wW&&i<sR;i++)run+=cd[i];
-  best=run;bCol=sL;
-  for(let i=sL+1;i+wW<=sR;i++){run+=cd[i+wW-1]-cd[i-1];if(run>best){best=run;bCol=i}}
-  let rS=0,rW=0;
-  for(let r=sT;r<sB;r++){let rd=0;for(let c=bCol;c<bCol+wW&&c<fw;c++){const i=(r*fw+c)*4;if(Math.abs((d[i]+d[i+1]+d[i+2])/3-avg)>15)rd++}rS+=r*rd;rW+=rd}
-  const cR=rW>0?Math.round(rS/rW):Math.floor((sT+sB)/2);
-  const rw=Math.round(wW*.8),rh=Math.round((sB-sT)*.35);
-  return{x:Math.max(0,Math.round(bCol+wW/2-rw/2)),y:Math.max(0,Math.round(cR-rh/2)),w:rw,h:rh};
+// ─── Audio ──────────────────────────────────────────────────────
+let audioCtx = null;
+function getAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  return audioCtx;
+}
+function playTone(f, d, t) {
+  try {
+    const c = getAudio(), o = c.createOscillator(), g = c.createGain();
+    o.type = t || "sine"; o.frequency.value = f;
+    g.gain.setValueAtTime(0.35, c.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.01, c.currentTime + d);
+    o.connect(g); g.connect(c.destination); o.start(); o.stop(c.currentTime + d);
+  } catch(e) {}
+}
+function goodTone() { playTone(880, .15); setTimeout(() => playTone(1108, .2), 120); }
+function badTone() { playTone(280, .25, "sawtooth"); setTimeout(() => playTone(220, .35, "sawtooth"), 200); }
+function calibTone() { playTone(660, .1); setTimeout(() => playTone(880, .15), 100); setTimeout(() => playTone(1100, .2), 200); }
+function beep() { playTone(600, .08); }
+function beepHigh() { playTone(900, .15); }
+function speak(t) { try { const u = new SpeechSynthesisUtterance(t); u.rate = 1.1; u.volume = 0.9; speechSynthesis.speak(u); } catch(e) {} }
+
+// ─── DOM ────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const video = $("video"), olCanvas = $("overlay"), olCtx = olCanvas.getContext("2d");
+
+function showScreen(n) {
+  $("landingScreen").classList.toggle("active", n === "landing");
+  $("cameraScreen").classList.toggle("active", n === "camera");
+  $("reviewScreen").classList.toggle("active", n === "review");
 }
 
-const $=id=>document.getElementById(id);
-const video=$("video"),olCanvas=$("overlay"),olCtx=olCanvas.getContext("2d");
-
-function showScreen(n){$("landingScreen").classList.toggle("active",n==="landing");$("cameraScreen").classList.toggle("active",n==="camera");$("reviewScreen").classList.toggle("active",n==="review")}
-
-// Voice recognition
-function startVoice(){
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR)return;
-  recognition=new SR();recognition.continuous=true;recognition.interimResults=false;recognition.lang="en-US";
-  recognition.onresult=e=>{const l=e.results[e.results.length-1];if(l.isFinal){const t=l[0].transcript.toLowerCase();if(t.includes("calibrate")||t.includes("reset"))doRecal();else if(t.includes("stop")||t.includes("end")||t.includes("done")||t.includes("finish"))endSession()}};
-  recognition.onerror=e=>{if(e.error!=="aborted"&&phase==="active")setTimeout(()=>{try{recognition.start()}catch(x){}},500)};
-  recognition.onend=()=>{if(phase==="active")setTimeout(()=>{try{recognition.start()}catch(x){}},300)};
-  try{recognition.start()}catch(e){}
+// ─── Voice recognition ─────────────────────────────────────────
+function startVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return;
+  recognition = new SR();
+  recognition.continuous = true; recognition.interimResults = false; recognition.lang = "en-US";
+  recognition.onresult = e => {
+    const l = e.results[e.results.length - 1];
+    if (l.isFinal) {
+      const t = l[0].transcript.toLowerCase();
+      if (t.includes("calibrate") || t.includes("reset")) doRecal();
+      else if (t.includes("stop") || t.includes("end") || t.includes("done") || t.includes("finish")) endSession();
+    }
+  };
+  recognition.onerror = e => {
+    if (e.error !== "aborted" && phase === "active") setTimeout(() => { try { recognition.start(); } catch(x) {} }, 500);
+  };
+  recognition.onend = () => {
+    if (phase === "active") setTimeout(() => { try { recognition.start(); } catch(x) {} }, 300);
+  };
+  try { recognition.start(); } catch(e) {}
 }
-function stopVoice(){if(recognition){try{recognition.abort()}catch(e){}recognition=null}}
+function stopVoice() { if (recognition) { try { recognition.abort(); } catch(e) {} recognition = null; } }
 
-// Landing controls
-$("feedbackToggles").addEventListener("click",e=>{const b=e.target.closest(".tog");if(!b)return;getAudio();feedbackMode=b.dataset.val;document.querySelectorAll("#feedbackToggles .tog").forEach(x=>x.classList.toggle("on",x===b))});
-$("countdownToggles").addEventListener("click",e=>{const b=e.target.closest(".tog");if(!b)return;countdownSecs=+b.dataset.val;document.querySelectorAll("#countdownToggles .tog").forEach(x=>x.classList.toggle("on",x===b))});
-$("trackerToggle").addEventListener("click",function(){showTracker=!showTracker;this.classList.toggle("on",showTracker);this.textContent=showTracker?"ON":"OFF"});
-$("sensSlider").addEventListener("input",function(){sensitivity=+this.value;$("sensVal").textContent=sensitivity});
-$("viewSessionsBtn").addEventListener("click",()=>{renderReview();showScreen("review")});
-if(sessions.length>0)$("viewSessionsBtn").style.display="";
+// ─── Landing controls ───────────────────────────────────────────
+$("feedbackToggles").addEventListener("click", e => {
+  const b = e.target.closest(".tog"); if (!b) return; getAudio();
+  feedbackMode = b.dataset.val;
+  document.querySelectorAll("#feedbackToggles .tog").forEach(x => x.classList.toggle("on", x === b));
+});
+$("countdownToggles").addEventListener("click", e => {
+  const b = e.target.closest(".tog"); if (!b) return;
+  countdownSecs = +b.dataset.val;
+  document.querySelectorAll("#countdownToggles .tog").forEach(x => x.classList.toggle("on", x === b));
+});
+$("trackerToggle").addEventListener("click", function() {
+  showTracker = !showTracker; this.classList.toggle("on", showTracker); this.textContent = showTracker ? "ON" : "OFF";
+});
+$("sensSlider").addEventListener("input", function() { sensitivity = +this.value; $("sensVal").textContent = sensitivity; });
+$("viewSessionsBtn").addEventListener("click", () => { renderReview(); showScreen("review"); });
+if (sessions.length > 0) $("viewSessionsBtn").style.display = "";
 
-// Start
-$("startBtn").addEventListener("click",async()=>{
-  getAudio();
-  $("startBtn").textContent="Loading…";$("startBtn").disabled=true;
-  try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment",width:{ideal:640},height:{ideal:480}},audio:false});
-    video.srcObject=stream;await video.play();
-    phase="countdown";hipRegion=null;baselineY=null;goodSwings=0;badSwings=0;prevFrame=null;swingState="idle";motionBuf=[];
-    $("trackerBar").style.display=showTracker?"flex":"none";
-    $("resultFlash").style.display="none";$("swingDot").classList.remove("on");$("statusBadge").style.display="none";
-    updateStats();showScreen("camera");startCountdown();
-  }catch(e){alert("Camera error: "+e.message)}
-  $("startBtn").textContent="Start Session";$("startBtn").disabled=false;
+// ─── Load model + start ─────────────────────────────────────────
+$("startBtn").addEventListener("click", async () => {
+  getAudio(); // Init audio on user gesture
+  $("startBtn").disabled = true;
+  $("startBtn").textContent = "Loading…";
+  $("loadingMsg").style.display = "";
+  $("loadingMsg").textContent = "Loading pose detection model…";
+
+  try {
+    // Load MoveNet if not already loaded
+    if (!detector) {
+      await tf.setBackend("webgl");
+      await tf.ready();
+      const pd = poseDetection;
+      detector = await pd.createDetector(pd.SupportedModels.MoveNet, {
+        modelType: pd.movenet.modelType.SINGLEPOSE_LIGHTNING,
+      });
+      $("loadingMsg").textContent = "Model loaded! Starting camera…";
+    }
+
+    // Start camera
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+
+    // Reset state
+    phase = "countdown";
+    baselineHipY = null;
+    prevWristY = null;
+    goodSwings = 0; badSwings = 0;
+    swingState = "idle"; swingPeakShift = 0; swingFrameCount = 0;
+    wristSpeedBuf = []; idleFrames = 0;
+
+    $("trackerBar").style.display = showTracker ? "flex" : "none";
+    $("resultFlash").style.display = "none";
+    $("swingDot").classList.remove("on");
+    $("statusBadge").style.display = "none";
+    $("debugInfo").textContent = "";
+    updateStats();
+    showScreen("camera");
+    startCountdown();
+
+  } catch(e) {
+    alert("Error: " + e.message);
+  }
+
+  $("startBtn").textContent = "Start Session";
+  $("startBtn").disabled = false;
+  $("loadingMsg").style.display = "none";
 });
 
-// Countdown
-function startCountdown(){
-  let rem=countdownSecs;
-  const ov=$("countdownOverlay"),num=$("countdownNum"),msg=$("countdownMsg");
-  ov.style.display="flex";num.textContent=rem;msg.textContent="Get into your address position";
+// ─── Countdown ─────────────────────────────────────────────────
+function startCountdown() {
+  let rem = countdownSecs;
+  const ov = $("countdownOverlay"), num = $("countdownNum"), msg = $("countdownMsg");
+  ov.style.display = "flex";
+  num.textContent = rem;
+  msg.textContent = "Get into your address position";
   speak("Get into your address position");
-  countdownInterval=setInterval(()=>{
+
+  countdownInterval = setInterval(() => {
     rem--;
-    if(rem<=0){clearInterval(countdownInterval);countdownInterval=null;ov.style.display="none";beepHigh();autoCalibrate();return}
-    num.textContent=rem;
-    if(rem<=3){beepHigh();if(rem===3)msg.textContent="Hold still…"}else beep();
-  },1000);
-}
-
-// Auto calibrate
-function autoCalibrate(){
-  const badge=$("statusBadge");badge.style.display="";badge.textContent="Detecting hip position…";
-  let samples=[],count=0;
-  function run(){
-    if(!video||!stream)return;
-    const frame=getFrame(video);
-    if(count===0){hipRegion=autoDetectHipRegion(frame)}
-    samples.push(hipCentroidY(frame,hipRegion));count++;
-    if(count<25){requestAnimationFrame(run);return}
-    baselineY=samples.reduce((a,b)=>a+b,0)/samples.length;
-    prevFrame=getFrame(video);motionBuf=[];
-    calibTone();
-    badge.textContent="Calibrated — swing away!";
-    if(feedbackMode==="voice"||feedbackMode==="both")setTimeout(()=>speak("Calibrated. Start swinging."),300);
-    setTimeout(()=>{badge.style.display="none"},3000);
-    phase="active";startLoop();startVoice();
-  }
-  requestAnimationFrame(run);
-}
-
-// Recalibrate
-function doRecal(){
-  if(rafId)cancelAnimationFrame(rafId);phase="recal";
-  const badge=$("statusBadge");badge.style.display="";badge.textContent="Re-calibrating…";
-  if(feedbackMode==="voice"||feedbackMode==="both")speak("Re-calibrating. Hold address.");
-  let rem=3;
-  const ov=$("countdownOverlay"),num=$("countdownNum"),msg=$("countdownMsg");
-  ov.style.display="flex";num.textContent=rem;msg.textContent="Hold address position";
-  const iv=setInterval(()=>{rem--;if(rem<=0){clearInterval(iv);ov.style.display="none";autoCalibrate();return}num.textContent=rem;beepHigh()},1000);
-}
-$("recalBtn").addEventListener("click",doRecal);
-
-// Detection loop
-function startLoop(){
-  if(rafId)cancelAnimationFrame(rafId);
-  function loop(){
-    if(!stream||phase!=="active")return;
-    const curr=getFrame(video);
-    if(prevFrame&&hipRegion&&baselineY!==null){
-      const motion=overallMotion(prevFrame,curr);motionBuf.push(motion);if(motionBuf.length>60)motionBuf.shift();
-      const hy=hipCentroidY(curr,hipRegion);drawOverlay(hy);
-      if(swingState==="idle"&&motion>SWING_MOTION_THRESHOLD){swingState="swinging";swingMaxShift=0;swingFrames=0;$("swingDot").classList.add("on")}
-      else if(swingState==="swinging"){
-        const shift=baselineY-hy;if(shift>swingMaxShift)swingMaxShift=shift;swingFrames++;
-        const rec=motionBuf.slice(-6),avg=rec.reduce((a,b)=>a+b,0)/rec.length;
-        if(avg<SWING_MOTION_THRESHOLD*.25&&swingFrames>6){evalSwing(swingMaxShift);swingState="cooldown";$("swingDot").classList.remove("on");cooldownTimer=setTimeout(()=>{swingState="idle"},SWING_COOLDOWN_MS)}
-      }
+    if (rem <= 0) {
+      clearInterval(countdownInterval); countdownInterval = null;
+      ov.style.display = "none";
+      beepHigh();
+      autoCalibrate();
+      return;
     }
-    prevFrame=curr;rafId=requestAnimationFrame(loop);
-  }
-  rafId=requestAnimationFrame(loop);
+    num.textContent = rem;
+    if (rem <= 3) { beepHigh(); if (rem === 3) msg.textContent = "Hold still…"; }
+    else beep();
+  }, 1000);
 }
 
-function evalSwing(ms){
-  const bad=ms>sensitivity;
-  if(bad){badSwings++;showResult("bad");if(feedbackMode==="tone"||feedbackMode==="both")badTone();if(feedbackMode==="voice"||feedbackMode==="both")setTimeout(()=>speak("Early extension"),200)}
-  else{goodSwings++;showResult("good");if(feedbackMode==="tone"||feedbackMode==="both")goodTone();if(feedbackMode==="voice"||feedbackMode==="both")setTimeout(()=>speak("Good swing"),200)}
+// ─── Auto-calibrate using MoveNet ──────────────────────────────
+function autoCalibrate() {
+  phase = "calibrating";
+  const badge = $("statusBadge");
+  badge.style.display = ""; badge.textContent = "Detecting your hips…";
+
+  let hipSamples = [];
+  let frameCount = 0;
+  const maxFrames = 30; // ~1 second of samples
+  let failures = 0;
+  const maxFailures = 90; // ~3 seconds with no detection
+
+  async function sample() {
+    if (!video || !stream) return;
+
+    try {
+      const poses = await detector.estimatePoses(video);
+      if (poses.length > 0) {
+        const kps = poses[0].keypoints;
+        const lh = kps[KP.L_HIP], rh = kps[KP.R_HIP];
+
+        if (lh.score > MIN_CONFIDENCE && rh.score > MIN_CONFIDENCE) {
+          // Hip Y = average of left and right hip Y in image coordinates
+          // From DTL camera: moving TOWARD ball = moving AWAY from camera = UP in image = SMALLER Y
+          const hipY = (lh.y + rh.y) / 2;
+          hipSamples.push(hipY);
+
+          // Also grab wrist position for initial reference
+          const lw = kps[KP.L_WRIST], rw = kps[KP.R_WRIST];
+          if (lw.score > MIN_CONFIDENCE || rw.score > MIN_CONFIDENCE) {
+            const wy = lw.score > rw.score ? lw.y : rw.y;
+            prevWristY = wy;
+          }
+
+          // Draw skeleton to confirm detection
+          drawSkeleton(kps);
+
+          frameCount++;
+          if (frameCount >= maxFrames) {
+            // Success — compute baseline
+            baselineHipY = hipSamples.reduce((a, b) => a + b, 0) / hipSamples.length;
+            wristSpeedBuf = [];
+            calibTone();
+            badge.textContent = "Calibrated — swing away!";
+            if (feedbackMode === "voice" || feedbackMode === "both") {
+              setTimeout(() => speak("Calibrated. Start swinging."), 300);
+            }
+            setTimeout(() => { badge.style.display = "none"; }, 3000);
+            phase = "active";
+            startDetectionLoop();
+            startVoice();
+            return;
+          }
+        } else {
+          failures++;
+          drawSkeleton(kps); // Still draw what we see
+        }
+      } else {
+        failures++;
+      }
+    } catch(e) {
+      failures++;
+    }
+
+    if (failures > maxFailures) {
+      badge.textContent = "Can't see your hips clearly. Adjust camera.";
+      badge.style.color = "#ff4646";
+      if (feedbackMode === "voice" || feedbackMode === "both") {
+        speak("Cannot detect hips. Please adjust camera position.");
+      }
+      setTimeout(() => { badge.style.color = "#c8f56e"; }, 3000);
+      // Retry
+      failures = 0; frameCount = 0; hipSamples = [];
+    }
+
+    requestAnimationFrame(sample);
+  }
+  requestAnimationFrame(sample);
+}
+
+// ─── Main detection loop ───────────────────────────────────────
+function startDetectionLoop() {
+  if (rafId) cancelAnimationFrame(rafId);
+
+  let prevLWrist = null, prevRWrist = null;
+
+  async function loop() {
+    if (!stream || phase !== "active") return;
+
+    try {
+      const poses = await detector.estimatePoses(video);
+
+      if (poses.length > 0) {
+        const kps = poses[0].keypoints;
+        const lh = kps[KP.L_HIP], rh = kps[KP.R_HIP];
+        const lw = kps[KP.L_WRIST], rw = kps[KP.R_WRIST];
+        const ls = kps[KP.L_SHOULDER], rs = kps[KP.R_SHOULDER];
+
+        // Current hip Y (average of both hips)
+        let currentHipY = null;
+        if (lh.score > MIN_CONFIDENCE && rh.score > MIN_CONFIDENCE) {
+          currentHipY = (lh.y + rh.y) / 2;
+        } else if (lh.score > MIN_CONFIDENCE) {
+          currentHipY = lh.y;
+        } else if (rh.score > MIN_CONFIDENCE) {
+          currentHipY = rh.y;
+        }
+
+        // Wrist speed (use the faster-moving wrist)
+        let wristSpeed = 0;
+        if (lw.score > MIN_CONFIDENCE && prevLWrist) {
+          const dx = lw.x - prevLWrist.x, dy = lw.y - prevLWrist.y;
+          wristSpeed = Math.max(wristSpeed, Math.sqrt(dx*dx + dy*dy));
+        }
+        if (rw.score > MIN_CONFIDENCE && prevRWrist) {
+          const dx = rw.x - prevRWrist.x, dy = rw.y - prevRWrist.y;
+          wristSpeed = Math.max(wristSpeed, Math.sqrt(dx*dx + dy*dy));
+        }
+        prevLWrist = lw.score > MIN_CONFIDENCE ? { x: lw.x, y: lw.y } : prevLWrist;
+        prevRWrist = rw.score > MIN_CONFIDENCE ? { x: rw.x, y: rw.y } : prevRWrist;
+
+        wristSpeedBuf.push(wristSpeed);
+        if (wristSpeedBuf.length > 30) wristSpeedBuf.shift();
+
+        // Draw overlay
+        drawSkeleton(kps, currentHipY);
+
+        // Debug info
+        const shift = (baselineHipY !== null && currentHipY !== null) ? (baselineHipY - currentHipY).toFixed(1) : "—";
+        $("debugInfo").textContent = `Hip shift: ${shift}px | Wrist: ${wristSpeed.toFixed(0)}px/f | State: ${swingState}`;
+
+        // ─── Swing state machine ────────────────────
+        if (swingState === "idle") {
+          if (wristSpeed > WRIST_SPEED_START) {
+            swingState = "backswing";
+            swingPeakShift = 0;
+            swingFrameCount = 0;
+            idleFrames = 0;
+            $("swingDot").classList.add("on");
+          }
+        }
+        else if (swingState === "backswing" || swingState === "downswing") {
+          swingFrameCount++;
+
+          // Track hip shift toward ball (smaller Y = toward ball)
+          if (currentHipY !== null && baselineHipY !== null) {
+            const shift = baselineHipY - currentHipY; // positive = toward ball
+            if (shift > swingPeakShift) swingPeakShift = shift;
+          }
+
+          // Detect transition from backswing to downswing
+          if (swingState === "backswing" && swingFrameCount > 3) {
+            swingState = "downswing";
+          }
+
+          // Detect swing end: wrist speed drops and stays low
+          if (wristSpeed < WRIST_SPEED_END) {
+            idleFrames++;
+          } else {
+            idleFrames = 0;
+          }
+
+          if (idleFrames >= IDLE_FRAMES_NEEDED && swingFrameCount >= MIN_SWING_FRAMES) {
+            // Swing complete — evaluate
+            evalSwing(swingPeakShift);
+            swingState = "cooldown";
+            $("swingDot").classList.remove("on");
+            cooldownTimer = setTimeout(() => { swingState = "idle"; }, SWING_COOLDOWN_MS);
+          }
+
+          // Safety: if swing goes way too long, abort
+          if (swingFrameCount > 120) {
+            swingState = "cooldown";
+            $("swingDot").classList.remove("on");
+            cooldownTimer = setTimeout(() => { swingState = "idle"; }, SWING_COOLDOWN_MS);
+          }
+        }
+      }
+    } catch(e) {
+      // Continue on error
+    }
+
+    rafId = requestAnimationFrame(loop);
+  }
+  rafId = requestAnimationFrame(loop);
+}
+
+// ─── Evaluate swing ────────────────────────────────────────────
+function evalSwing(peakShift) {
+  const isEarly = peakShift > sensitivity;
+  if (isEarly) {
+    badSwings++;
+    showResult("bad");
+    if (feedbackMode === "tone" || feedbackMode === "both") badTone();
+    if (feedbackMode === "voice" || feedbackMode === "both") setTimeout(() => speak("Early extension"), 200);
+  } else {
+    goodSwings++;
+    showResult("good");
+    if (feedbackMode === "tone" || feedbackMode === "both") goodTone();
+    if (feedbackMode === "voice" || feedbackMode === "both") setTimeout(() => speak("Good swing"), 200);
+  }
   updateStats();
 }
 
-function showResult(t){const el=$("resultFlash");el.className="result-flash "+t;$("resultText").textContent=t==="good"?"GOOD SWING":"EARLY EXTENSION";el.style.display="flex";if(resultTimer)clearTimeout(resultTimer);resultTimer=setTimeout(()=>{el.style.display="none"},2200)}
-function updateStats(){const t=goodSwings+badSwings;$("totalNum").textContent=t;$("goodNum").textContent=goodSwings;$("badNum").textContent=badSwings;$("pctNum").textContent=(t>0?Math.round((goodSwings/t)*100):0)+"%"}
+function showResult(t) {
+  const el = $("resultFlash");
+  el.className = "result-flash " + t;
+  $("resultText").textContent = t === "good" ? "GOOD SWING" : "EARLY EXTENSION";
+  el.style.display = "flex";
+  if (resultTimer) clearTimeout(resultTimer);
+  resultTimer = setTimeout(() => { el.style.display = "none"; }, 2200);
+}
 
-function drawOverlay(hy){
-  const c=olCanvas,w=c.clientWidth,h=c.clientHeight;c.width=w;c.height=h;
-  const ctx=olCtx;ctx.clearRect(0,0,w,h);if(!hipRegion)return;
-  const sx=w/AW,sy=h/AH;
-  ctx.strokeStyle="rgba(200,245,110,0.5)";ctx.lineWidth=2;ctx.strokeRect(hipRegion.x*sx,hipRegion.y*sy,hipRegion.w*sx,hipRegion.h*sy);
-  ctx.fillStyle="rgba(200,245,110,0.7)";ctx.font="bold 11px -apple-system,sans-serif";ctx.fillText("HIP ZONE",hipRegion.x*sx,hipRegion.y*sy-6);
-  if(baselineY!==null){
-    const by=baselineY*sy;ctx.beginPath();ctx.moveTo(hipRegion.x*sx,by);ctx.lineTo((hipRegion.x+hipRegion.w)*sx,by);ctx.strokeStyle="#c8f56e";ctx.lineWidth=2;ctx.setLineDash([6,4]);ctx.stroke();ctx.setLineDash([]);
-    const ty=(baselineY-sensitivity)*sy;ctx.beginPath();ctx.moveTo(hipRegion.x*sx,ty);ctx.lineTo((hipRegion.x+hipRegion.w)*sx,ty);ctx.strokeStyle="rgba(255,70,70,0.5)";ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.stroke();ctx.setLineDash([]);
-    const cy=hy*sy;ctx.beginPath();ctx.moveTo(hipRegion.x*sx,cy);ctx.lineTo((hipRegion.x+hipRegion.w)*sx,cy);ctx.strokeStyle="#fff";ctx.lineWidth=1.5;ctx.setLineDash([]);ctx.stroke();
+function updateStats() {
+  const t = goodSwings + badSwings;
+  $("totalNum").textContent = t;
+  $("goodNum").textContent = goodSwings;
+  $("badNum").textContent = badSwings;
+  $("pctNum").textContent = (t > 0 ? Math.round((goodSwings/t) * 100) : 0) + "%";
+}
+
+// ─── Draw skeleton overlay ─────────────────────────────────────
+function drawSkeleton(kps, currentHipY) {
+  const c = olCanvas, w = c.clientWidth, h = c.clientHeight;
+  c.width = w; c.height = h;
+  const ctx = olCtx;
+  ctx.clearRect(0, 0, w, h);
+
+  const vw = video.videoWidth || 640, vh = video.videoHeight || 480;
+  // Scale from video coords to canvas coords
+  // video is object-fit:cover so we need to compute the visible area
+  const videoAspect = vw / vh;
+  const canvasAspect = w / h;
+  let sx, sy, ox, oy;
+  if (videoAspect > canvasAspect) {
+    // Video is wider — crop sides
+    sy = h / vh;
+    sx = sy;
+    ox = (w - vw * sx) / 2;
+    oy = 0;
+  } else {
+    // Video is taller — crop top/bottom
+    sx = w / vw;
+    sy = sx;
+    ox = 0;
+    oy = (h - vh * sy) / 2;
+  }
+
+  function tx(x) { return x * sx + ox; }
+  function ty(y) { return y * sy + oy; }
+
+  // Draw skeleton connections
+  const connections = [
+    [KP.L_SHOULDER, KP.R_SHOULDER],
+    [KP.L_SHOULDER, KP.L_ELBOW], [KP.L_ELBOW, KP.L_WRIST],
+    [KP.R_SHOULDER, KP.R_ELBOW], [KP.R_ELBOW, KP.R_WRIST],
+    [KP.L_SHOULDER, KP.L_HIP], [KP.R_SHOULDER, KP.R_HIP],
+    [KP.L_HIP, KP.R_HIP],
+    [KP.L_HIP, KP.L_KNEE], [KP.L_KNEE, KP.L_ANKLE],
+    [KP.R_HIP, KP.R_KNEE], [KP.R_KNEE, KP.R_ANKLE],
+  ];
+
+  ctx.strokeStyle = "rgba(200, 245, 110, 0.3)";
+  ctx.lineWidth = 2;
+  connections.forEach(([a, b]) => {
+    if (kps[a].score > MIN_CONFIDENCE && kps[b].score > MIN_CONFIDENCE) {
+      ctx.beginPath();
+      ctx.moveTo(tx(kps[a].x), ty(kps[a].y));
+      ctx.lineTo(tx(kps[b].x), ty(kps[b].y));
+      ctx.stroke();
+    }
+  });
+
+  // Draw keypoints
+  kps.forEach((kp, i) => {
+    if (kp.score > MIN_CONFIDENCE) {
+      ctx.beginPath();
+      ctx.arc(tx(kp.x), ty(kp.y), i === KP.L_HIP || i === KP.R_HIP ? 7 : 4, 0, Math.PI * 2);
+      ctx.fillStyle = (i === KP.L_HIP || i === KP.R_HIP) ? "#c8f56e" : "rgba(255,255,255,0.5)";
+      ctx.fill();
+    }
+  });
+
+  // Hip keypoints get a label
+  const lh = kps[KP.L_HIP], rh = kps[KP.R_HIP];
+  if (lh.score > MIN_CONFIDENCE && rh.score > MIN_CONFIDENCE) {
+    const midX = tx((lh.x + rh.x) / 2);
+    const midY = ty((lh.y + rh.y) / 2);
+    ctx.fillStyle = "rgba(200,245,110,0.7)";
+    ctx.font = "bold 11px -apple-system, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("HIPS", midX, midY - 14);
+  }
+
+  // Draw baseline reference line
+  if (baselineHipY !== null) {
+    const by = ty(baselineHipY);
+    const lineLeft = tx(Math.min(lh.x || 0, rh.x || 0) - 30);
+    const lineRight = tx(Math.max(lh.x || vw, rh.x || vw) + 30);
+
+    // Baseline (green dashed)
+    ctx.beginPath(); ctx.moveTo(lineLeft, by); ctx.lineTo(lineRight, by);
+    ctx.strokeStyle = "#c8f56e"; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.stroke(); ctx.setLineDash([]);
+
+    // Threshold (red dashed) — threshold is in video pixel space
+    const threshY = ty(baselineHipY - sensitivity);
+    ctx.beginPath(); ctx.moveTo(lineLeft, threshY); ctx.lineTo(lineRight, threshY);
+    ctx.strokeStyle = "rgba(255, 70, 70, 0.5)"; ctx.lineWidth = 1; ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]);
+
+    // Current hip position (white)
+    if (currentHipY !== null) {
+      const cy = ty(currentHipY);
+      ctx.beginPath(); ctx.moveTo(lineLeft, cy); ctx.lineTo(lineRight, cy);
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.setLineDash([]); ctx.stroke();
+    }
+
+    // Labels
+    ctx.font = "bold 10px -apple-system, sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#c8f56e";
+    ctx.fillText("BASELINE", lineRight + 4, by + 4);
+    ctx.fillStyle = "rgba(255,70,70,0.7)";
+    ctx.fillText("THRESHOLD", lineRight + 4, threshY + 4);
   }
 }
 
-function endSession(){
-  if(rafId)cancelAnimationFrame(rafId);if(cooldownTimer)clearTimeout(cooldownTimer);if(resultTimer)clearTimeout(resultTimer);
-  if(countdownInterval){clearInterval(countdownInterval);countdownInterval=null}
-  stopVoice();if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
-  const t=goodSwings+badSwings;
-  if(t>0){const p=Math.round((goodSwings/t)*100);sessions.push({date:new Date().toISOString(),good:goodSwings,bad:badSwings,total:t,pct:p});saveS();speak("Session complete. "+t+" swings. "+p+" percent clean.")}
-  phase="review";renderReview();showScreen("review");
-}
-$("endBtn").addEventListener("click",endSession);
+// ─── Recalibrate ───────────────────────────────────────────────
+function doRecal() {
+  if (rafId) cancelAnimationFrame(rafId);
+  stopVoice();
+  phase = "recal";
+  const badge = $("statusBadge");
+  badge.style.display = ""; badge.textContent = "Re-calibrating…";
+  if (feedbackMode === "voice" || feedbackMode === "both") speak("Re-calibrating. Hold address.");
 
-function renderReview(){
-  const list=$("sessionList");
-  if(!sessions.length){list.innerHTML='<p style="color:#666;font-size:14px">No sessions yet.</p>';$("clearBtn").style.display="none";return}
-  $("clearBtn").style.display="";
-  let h="";
-  [...sessions].reverse().forEach(s=>{const d=new Date(s.date),ds=d.toLocaleDateString("en-US",{month:"short",day:"numeric"}),ts=d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}),co=s.pct>=70?"#c8f56e":s.pct>=40?"#f5c842":"#ff4646";
-    h+=`<div class="session-card"><div class="session-head"><span class="date">${ds} · ${ts}</span><span class="count">${s.total} swings</span></div><div class="bar-bg"><div class="bar-fill" style="width:${s.pct}%;background:${co}"></div></div><div class="session-stats"><span class="g">${s.good} good</span><span class="b">${s.bad} ext</span><span class="p">${s.pct}%</span></div></div>`});
-  list.innerHTML=h;
+  let rem = 3;
+  const ov = $("countdownOverlay"), num = $("countdownNum"), msg = $("countdownMsg");
+  ov.style.display = "flex"; num.textContent = rem; msg.textContent = "Hold address position";
+  const iv = setInterval(() => {
+    rem--;
+    if (rem <= 0) { clearInterval(iv); ov.style.display = "none"; autoCalibrate(); return; }
+    num.textContent = rem; beepHigh();
+  }, 1000);
 }
-$("newSessionBtn").addEventListener("click",()=>{$("viewSessionsBtn").style.display=sessions.length>0?"":"none";showScreen("landing")});
-$("clearBtn").addEventListener("click",()=>{sessions=[];saveS();renderReview()});
+$("recalBtn").addEventListener("click", doRecal);
+
+// ─── End session ───────────────────────────────────────────────
+function endSession() {
+  if (rafId) cancelAnimationFrame(rafId);
+  if (cooldownTimer) clearTimeout(cooldownTimer);
+  if (resultTimer) clearTimeout(resultTimer);
+  if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+  stopVoice();
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+
+  const t = goodSwings + badSwings;
+  if (t > 0) {
+    const p = Math.round((goodSwings / t) * 100);
+    sessions.push({ date: new Date().toISOString(), good: goodSwings, bad: badSwings, total: t, pct: p });
+    saveS();
+    speak("Session complete. " + t + " swings. " + p + " percent clean.");
+  }
+
+  phase = "review";
+  renderReview();
+  showScreen("review");
+}
+$("endBtn").addEventListener("click", endSession);
+
+// ─── Review ────────────────────────────────────────────────────
+function renderReview() {
+  const list = $("sessionList");
+  if (!sessions.length) {
+    list.innerHTML = '<p style="color:#666;font-size:14px">No sessions yet.</p>';
+    $("clearBtn").style.display = "none"; return;
+  }
+  $("clearBtn").style.display = "";
+  let h = "";
+  [...sessions].reverse().forEach(s => {
+    const d = new Date(s.date);
+    const ds = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const ts = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    const co = s.pct >= 70 ? "#c8f56e" : s.pct >= 40 ? "#f5c842" : "#ff4646";
+    h += `<div class="session-card"><div class="session-head"><span class="date">${ds} · ${ts}</span><span class="count">${s.total} swings</span></div><div class="bar-bg"><div class="bar-fill" style="width:${s.pct}%;background:${co}"></div></div><div class="session-stats"><span class="g">${s.good} good</span><span class="b">${s.bad} ext</span><span class="p">${s.pct}%</span></div></div>`;
+  });
+  list.innerHTML = h;
+}
+
+$("newSessionBtn").addEventListener("click", () => {
+  $("viewSessionsBtn").style.display = sessions.length > 0 ? "" : "none";
+  showScreen("landing");
+});
+$("clearBtn").addEventListener("click", () => { sessions = []; saveS(); renderReview(); });
 </script>
 </body>
 </html>
